@@ -4,6 +4,9 @@ using System.Collections.Generic;
 [Serializable]
 public class SaveData
 {
-    public int loopCount;
-    public List<ChatMessage> conversationHistory;
+    public const int CurrentVersion = 2;
+    public int saveVersion = CurrentVersion;
+    public GameState gameState = new GameState();
+    public SceneDirective lastScene;
+    public List<ChatMessage> conversationHistory = new List<ChatMessage>();
 }

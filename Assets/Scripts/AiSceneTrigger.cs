@@ -5,6 +5,11 @@ public class AISceneTrigger : MonoBehaviour
 {
     [SerializeField] private SceneDirectiveEventChannelSO channel;
     [SerializeField] private AIRequestService aiService;
+    [SerializeField] private bool useOfflineActOne = true;
+    [SerializeField] private bool useTutorial = true;
+    [SerializeField] private Font tutorialSourceFont;
+    private GameFlowController gameFlow;
+    public string CurrentEventId => gameFlow != null ? gameFlow.CurrentEventId : null;
 
     private const string STORY_BIBLE = @"
 너는 다크 판타지 이세계 TRPG의 스토리 진행자다. 다음 규칙을 반드시 지켜라.
@@ -30,17 +35,30 @@ public class AISceneTrigger : MonoBehaviour
 ";
 
     private List<ChatMessage> conversationHistory = new List<ChatMessage>();
-    private int loopCount = 1;
+    private GameState gameState = new GameState();
+    private SceneDirective lastScene;
 
     void Start()
     {
+        if (useTutorial)
+        {
+            gameObject.AddComponent<TutorialController>().Initialize(aiService, tutorialSourceFont);
+            return;
+        }
+        if (useOfflineActOne)
+        {
+            gameFlow = gameObject.AddComponent<GameFlowController>();
+            gameFlow.Initialize(channel);
+            return;
+        }
         SaveData loaded = SaveSystem.Load();
 
         if (loaded != null)
         {
             conversationHistory = loaded.conversationHistory;
-            loopCount = loaded.loopCount;
-            Debug.Log($"[AISceneTrigger] 이어하기, 현재 루프: {loopCount}");
+            gameState = loaded.gameState;
+            lastScene = loaded.lastScene;
+            Debug.Log($"[AISceneTrigger] 이어하기, 현재 루프: {gameState.loopCount}");
 
             // 추가: 마지막 assistant 응답을 다시 화면에 반영
             RestoreLastScene();
@@ -49,12 +67,18 @@ public class AISceneTrigger : MonoBehaviour
         {
             string firstTurn = "주인공이 여관에서 눈을 뜨자마자 낯선 존재에게 살해당하려는 첫 장면을 만들어줘.";
             conversationHistory.Add(new ChatMessage { role = "user", content = firstTurn });
-            StartCoroutine(aiService.SendConversation(STORY_BIBLE, conversationHistory, HandleApiResponse));
+            StartCoroutine(aiService.SendConversation(BuildSystemPrompt(), conversationHistory, HandleApiResponse));
         }
     }
 
     private void RestoreLastScene()
     {
+        if (lastScene != null)
+        {
+            lastScene.loopCount = gameState.loopCount;
+            channel.Raise(lastScene);
+            return;
+        }
         // 히스토리를 뒤에서부터 탐색해서 가장 최근 assistant 메시지를 찾음
         for (int i = conversationHistory.Count - 1; i >= 0; i--)
         {
@@ -72,15 +96,23 @@ public class AISceneTrigger : MonoBehaviour
 
     public void RequestNextScene(string playerChoice)
     {
+        if (gameFlow != null)
+        {
+            gameFlow.SelectChoice(gameFlow.CurrentEventId, playerChoice);
+            return;
+        }
         string nextTurn = $"플레이어가 방금 '{playerChoice}'를 선택했다. 그 선택의 결과로 이어지는 다음 장면을 만들어줘.";
         conversationHistory.Add(new ChatMessage { role = "user", content = nextTurn });
 
-        StartCoroutine(aiService.SendConversation(STORY_BIBLE, conversationHistory, HandleApiResponse));
+        StartCoroutine(aiService.SendConversation(BuildSystemPrompt(), conversationHistory, HandleApiResponse));
     }
 
     private void HandleApiResponse(string rawResponse)
     {
         SceneDirective directive = SceneDirectiveParser.Parse(rawResponse);
+        directive.loopCount = gameState.loopCount;
+        lastScene = directive;
+        gameState.currentLoop.locationId = directive.backgroundId;
 
         string assistantReply = SceneDirectiveParser.ExtractRawText(rawResponse);
         conversationHistory.Add(new ChatMessage { role = "assistant", content = assistantReply });
@@ -91,9 +123,34 @@ public class AISceneTrigger : MonoBehaviour
         // 매 씬마다 자동 저장
         SaveSystem.Save(new SaveData
         {
-            loopCount = loopCount,
+            gameState = gameState,
+            lastScene = lastScene,
             conversationHistory = conversationHistory
         });
+    }
+
+    public void RequestChoice(string eventId, string choiceId)
+    {
+        if (gameFlow != null)
+            gameFlow.SelectChoice(eventId, choiceId);
+        else
+            RequestNextScene(choiceId);
+    }
+
+    [ContextMenu("Start Fresh Offline Act One")]
+    public void StartFreshOfflineActOne()
+    {
+        if (gameFlow != null)
+            gameFlow.StartFresh();
+        else
+            Debug.LogWarning("[ActOne] Enter Play Mode with Use Offline Act One enabled first.");
+    }
+
+    private string BuildSystemPrompt()
+    {
+        return STORY_BIBLE + "\n[게임이 관리하는 현재 상태]\n"
+            + Newtonsoft.Json.JsonConvert.SerializeObject(gameState)
+            + "\n회차와 획득한 기억은 위 상태를 따른다. 출력으로 상태를 변경하거나 미발견 단서를 획득했다고 가정하지 않는다.";
     }
 
     // 테스트용: 저장 파일 삭제하고 처음부터 다시 시작하고 싶을 때 사용
@@ -105,6 +162,11 @@ public class AISceneTrigger : MonoBehaviour
         {
             System.IO.File.Delete(path);
             Debug.Log("[AISceneTrigger] 저장 파일 삭제됨");
+        }
+        foreach (string suffix in new[] { ".bak", ".tmp" })
+        {
+            if (System.IO.File.Exists(path + suffix))
+                System.IO.File.Delete(path + suffix);
         }
     }
 }

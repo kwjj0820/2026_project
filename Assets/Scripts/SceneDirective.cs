@@ -10,4 +10,6 @@ public class SceneDirective
     public string emotion;
     public int loopCount;
     public List<string> choices;
+    // Optional stable IDs; old AI responses continue to use choice text.
+    public List<string> choiceIds;
 }

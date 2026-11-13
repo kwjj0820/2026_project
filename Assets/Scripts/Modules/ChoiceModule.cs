@@ -23,19 +23,29 @@ public class ChoiceModule : MonoBehaviour
     {
         foreach (Transform child in container)
         {
+            child.gameObject.SetActive(false);
             Destroy(child.gameObject);
         }
 
-        foreach (string choiceText in directive.choices)
+        for (int i = 0; i < directive.choices.Count; i++)
         {
+            string choiceText = directive.choices[i];
             GameObject newButton = Instantiate(buttonPrefab, container);
             TextMeshProUGUI buttonText = newButton.GetComponentInChildren<TextMeshProUGUI>();
             buttonText.text = choiceText;
 
             // 클릭 이벤트 등록 (추가된 부분)
             Button btn = newButton.GetComponent<Button>();
-            string capturedChoice = choiceText; // 클로저 문제 방지용
-            btn.onClick.AddListener(() => sceneTrigger.RequestNextScene(capturedChoice));
+            string capturedChoice = directive.choiceIds != null && i < directive.choiceIds.Count
+                ? directive.choiceIds[i] : choiceText;
+            string capturedEvent = sceneTrigger.CurrentEventId;
+            btn.onClick.AddListener(() =>
+            {
+                if (!btn.interactable)
+                    return;
+                btn.interactable = false;
+                sceneTrigger.RequestChoice(capturedEvent, capturedChoice);
+            });
         }
     }
 }

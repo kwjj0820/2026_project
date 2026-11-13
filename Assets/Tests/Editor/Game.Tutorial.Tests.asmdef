@@ -1,0 +1,11 @@
+{
+    "name": "Game.Tutorial.Tests",
+    "references": ["Game.Tutorial"],
+    "includePlatforms": ["Editor"],
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll",
+        "Newtonsoft.Json.dll"
+    ],
+    "optionalUnityReferences": ["TestAssemblies"]
+}

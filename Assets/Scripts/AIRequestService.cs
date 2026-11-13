@@ -36,67 +36,55 @@ public class AIRequestService : MonoBehaviour
 
     public IEnumerator SendConversation(string systemPrompt, List<ChatMessage> history, Action<string> onResult)
     {
+        return SendStructuredConversation(systemPrompt, history, SCHEMA, onResult,
+            error => Debug.LogError("[AIRequestService] " + error));
+    }
+
+    public IEnumerator SendStructuredConversation(string systemPrompt, List<ChatMessage> history,
+        string schema, Action<string> onResult, Action<string> onError)
+    {
 #if !UNITY_EDITOR
-        Debug.LogError("AI direct requests are available only in the Unity Editor. Configure a server proxy before distributing a build.");
+        onError?.Invoke("AI 직접 호출은 Unity Editor에서만 사용할 수 있습니다.");
         yield break;
-#endif
+#else
         string apiKey = Environment.GetEnvironmentVariable(API_KEY_ENVIRONMENT_VARIABLE);
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            Debug.LogError("Set ANTHROPIC_API_KEY in your local environment and restart Unity Hub and the Unity Editor.");
+            onError?.Invoke("ANTHROPIC_API_KEY를 설정한 뒤 Unity Hub와 Editor를 다시 시작하세요.");
             yield break;
         }
 
         string messagesJson = BuildMessagesJson(history);
 
-        string body = $@"{{
-            ""model"": ""claude-sonnet-4-6"",
-            ""max_tokens"": 500,
-            ""system"": ""{EscapeJson(systemPrompt)}"",
-            ""messages"": {messagesJson},
-            ""output_config"": {{
-                ""format"": {{
-                    ""type"": ""json_schema"",
-                    ""schema"": {SCHEMA}
-                }}
-            }}
-        }}";
+        string body = Newtonsoft.Json.JsonConvert.SerializeObject(new
+        {
+            model = "claude-sonnet-4-6", max_tokens = 1000, system = systemPrompt,
+            messages = Newtonsoft.Json.Linq.JArray.Parse(messagesJson),
+            output_config = new { format = new { type = "json_schema", schema = Newtonsoft.Json.Linq.JObject.Parse(schema) } }
+        });
 
-        var request = new UnityWebRequest(ENDPOINT, "POST");
-        byte[] bodyRaw = Encoding.UTF8.GetBytes(body);
-        request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-        request.downloadHandler = new DownloadHandlerBuffer();
-        request.SetRequestHeader("Content-Type", "application/json");
-        request.SetRequestHeader("x-api-key", apiKey);
-        request.SetRequestHeader("anthropic-version", "2023-06-01");
+        using (var request = new UnityWebRequest(ENDPOINT, "POST"))
+        {
+            request.timeout = 45;
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(body);
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+            request.SetRequestHeader("x-api-key", apiKey);
+            request.SetRequestHeader("anthropic-version", "2023-06-01");
 
-        yield return request.SendWebRequest();
+            yield return request.SendWebRequest();
 
-        if (request.result == UnityWebRequest.Result.Success)
-            onResult?.Invoke(request.downloadHandler.text);
-        else
-            Debug.LogError($"API Error: {request.error} / {request.downloadHandler.text}");
+            if (request.result == UnityWebRequest.Result.Success)
+                onResult?.Invoke(request.downloadHandler.text);
+            else
+                onError?.Invoke($"API 요청 실패 (HTTP {request.responseCode}): {request.error}");
+        }
+#endif
     }
 
     private string BuildMessagesJson(List<ChatMessage> history)
     {
-        var sb = new StringBuilder("[");
-        for (int i = 0; i < history.Count; i++)
-        {
-            if (i > 0) sb.Append(",");
-            sb.Append($@"{{ ""role"": ""{history[i].role}"", ""content"": ""{EscapeJson(history[i].content)}"" }}");
-        }
-        sb.Append("]");
-        return sb.ToString();
-    }
-
-    private string EscapeJson(string text)
-    {
-        return text
-            .Replace("\\", "\\\\")
-            .Replace("\"", "\\\"")
-            .Replace("\r\n", "\\n")
-            .Replace("\n", "\\n")
-            .Replace("\r", "\\n");
+        return Newtonsoft.Json.JsonConvert.SerializeObject(history);
     }
 }
